@@ -34,4 +34,8 @@ script:
 after_success:
   - if [ x"$COVERAGE" = "xyes" ]; then ~/.local/bin/coveralls -b src -x .xs -e src/xxd -e src/if_perl.c --encodings utf-8 latin-1 EUC-KR; fi
 
+branches:
+  except:
+    - /^v[0-9]/
+
 # vim:set sts=2 sw=2 tw=0 et:
