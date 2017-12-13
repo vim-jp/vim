@@ -34,6 +34,7 @@ static DWriteContext *s_dwc = NULL;
 static int s_directx_enabled = 0;
 static int s_directx_load_attempted = 0;
 static int s_directx_scrlines = 0;
+static int s_directx_gdicursor = 0;
 # define IS_ENABLE_DIRECTX() (s_directx_enabled && s_dwc != NULL)
 static int directx_enabled(void);
 static void directx_binddc(void);
@@ -59,6 +60,7 @@ gui_mch_set_rendering_options(char_u *s)
     int	    dx_renmode = 0;
     int	    dx_taamode = 0;
     int	    dx_scrlines = 0;
+    int	    dx_gdicursor = 0;
 
     /* parse string as rendering options. */
     for (p = s; p != NULL && *p != NUL; )
@@ -123,6 +125,10 @@ gui_mch_set_rendering_options(char_u *s)
 	{
 	    dx_scrlines = atoi((char *)value);
 	}
+	else if (STRCMP(name, "gdicursor") == 0)
+	{
+	    dx_gdicursor = (atoi((char *)value) != 0);
+	}
 	else
 	    return FAIL;
     }
@@ -157,6 +163,7 @@ gui_mch_set_rendering_options(char_u *s)
     }
     s_directx_enabled = dx_enable;
     s_directx_scrlines = dx_scrlines;
+    s_directx_gdicursor = dx_gdicursor;
 
     return OK;
 #else
@@ -293,7 +300,7 @@ typedef int UINT_PTR;
 #endif
 
 static void _OnPaint( HWND hwnd);
-static void fill_rect(const RECT *rcp, HBRUSH hbr, COLORREF color);
+static void fill_rect(const RECT *rcp, COLORREF color);
 static void clear_rect(RECT *rcp);
 
 static WORD		s_dlgfntheight;		/* height of the dialog font */
@@ -1757,7 +1764,7 @@ gui_mch_draw_part_cursor(
     rc.right = rc.left + w;
     rc.bottom = rc.top + h;
 
-    fill_rect(&rc, NULL, color);
+    fill_rect(&rc, color);
 }
 
 
@@ -6219,8 +6226,15 @@ draw_line(
 {
 #if defined(FEAT_DIRECTX)
     if (IS_ENABLE_DIRECTX())
-	DWriteContext_DrawLine(s_dwc, x1, y1, x2, y2, color);
-    else
+    {
+	if (!s_directx_gdicursor)
+	{
+	    DWriteContext_DrawLine(s_dwc, x1, y1, x2, y2, color);
+	    return;
+	}
+	else
+	    DWriteContext_Flush(s_dwc);
+    }
 #endif
     {
 	HPEN	hpen = CreatePen(PS_SOLID, 1, color);
@@ -6240,33 +6254,40 @@ set_pixel(
 {
 #if defined(FEAT_DIRECTX)
     if (IS_ENABLE_DIRECTX())
-	DWriteContext_SetPixel(s_dwc, x, y, color);
-    else
+    {
+	if (!s_directx_gdicursor)
+	{
+	    DWriteContext_SetPixel(s_dwc, x, y, color);
+	    return;
+	}
+	else
+	    DWriteContext_Flush(s_dwc);
+    }
 #endif
-	SetPixel(s_hdc, x, y, color);
+    SetPixel(s_hdc, x, y, color);
 }
 
     static void
 fill_rect(
     const RECT	*rcp,
-    HBRUSH    	hbr,
     COLORREF	color)
 {
 #if defined(FEAT_DIRECTX)
     if (IS_ENABLE_DIRECTX())
-	DWriteContext_FillRect(s_dwc, rcp, color);
-    else
+    {
+	if (!s_directx_gdicursor)
+	{
+	    DWriteContext_FillRect(s_dwc, rcp, color);
+	    return;
+	}
+	else
+	    DWriteContext_Flush(s_dwc);
+    }
 #endif
     {
-	HBRUSH	hbr2;
-
-	if (hbr == NULL)
-	    hbr2 = CreateSolidBrush(color);
-	else
-	    hbr2 = hbr;
-	FillRect(s_hdc, rcp, hbr2);
-	if (hbr == NULL)
-	    DeleteBrush(hbr2);
+	HBRUSH	hbr = CreateSolidBrush(color);
+	FillRect(s_hdc, rcp, hbr);
+	DeleteBrush(hbr);
     }
 }
 
@@ -6351,7 +6372,12 @@ gui_mch_draw_string(
 	    brush_lru = !brush_lru;
 	}
 
-	fill_rect(&rc, hbr, gui.currBgColor);
+#if defined(FEAT_DIRECTX)
+	if (IS_ENABLE_DIRECTX())
+	    DWriteContext_FillRect(s_dwc, &rc, gui.currBgColor);
+	else
+#endif
+	    FillRect(s_hdc, &rc, hbr);
 
 	SetBkMode(s_hdc, TRANSPARENT);
 
@@ -6609,7 +6635,7 @@ gui_mch_flush(void)
     static void
 clear_rect(RECT *rcp)
 {
-    fill_rect(rcp, NULL, gui.back_pixel);
+    fill_rect(rcp, gui.back_pixel);
 }
 
 
